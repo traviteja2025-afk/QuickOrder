@@ -1,6 +1,6 @@
 
 export interface Product {
-  id: number | string; // Updated to accept Firestore String IDs
+  id: number | string;
   name: string;
   description: string;
   price: number;
@@ -19,12 +19,18 @@ export interface CustomerDetails {
   contact: string;
 }
 
+export type OrderStatus = 'pending' | 'paid' | 'confirmed' | 'shipped' | 'delivered' | 'cancelled';
+
 export interface OrderDetails {
+  firestoreId?: string; // Internal Firestore Document ID
+  userId?: string; // Link order to a registered user
   customer: CustomerDetails;
   products: ProductOrder[];
   totalAmount: number;
   orderId: string;
-  status: 'pending' | 'confirmed';
+  status: OrderStatus;
+  trackingNumber?: string;
+  createdAt?: any;
 }
 
 export interface UpiDetails {

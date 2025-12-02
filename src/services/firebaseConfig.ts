@@ -1,3 +1,4 @@
+
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
@@ -16,6 +17,17 @@ const firebaseConfig = {
 
 // Flag to tell App.tsx that configuration is present
 export const isFirebaseConfigured = true;
+
+// --- ROOT ADMINS (SUPER USERS) ---
+// These users ALWAYS have access, even if database is empty.
+export const ROOT_ADMIN_EMAILS = [
+    "admin@example.com", 
+    "t.raviteja2025@gmail.com", 
+];
+
+export const ROOT_ADMIN_PHONES = [
+    "9876543210", 
+];
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);

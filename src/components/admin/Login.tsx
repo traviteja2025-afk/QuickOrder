@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { 
   signInWithPopup, 
@@ -5,8 +6,10 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   updateProfile,
+  signOut
 } from 'firebase/auth';
 import { auth } from '../../services/firebaseConfig';
+import { isUserAdmin } from '../../services/adminService';
 import { User } from '../../types';
 
 interface LoginProps {
@@ -99,6 +102,19 @@ const Login: React.FC<LoginProps> = ({ targetRole, onLogin }) => {
       const provider = new GoogleAuthProvider();
       const result = await signInWithPopup(auth, provider);
       
+      const userEmail = result.user.email;
+
+      // SECURITY CHECK: Verify Admin Whitelist (Dynamic)
+      if (targetRole === 'admin') {
+          const isAdmin = await isUserAdmin(userEmail, null);
+          if (!isAdmin) {
+              setLoading(false);
+              setError(`Access Denied: The email "${userEmail}" is not authorized as an Admin.`);
+              await signOut(auth); // Kick them out immediately
+              return; 
+          }
+      }
+      
       // Success
       if (onLogin) {
         onLogin({
@@ -119,7 +135,6 @@ const Login: React.FC<LoginProps> = ({ targetRole, onLogin }) => {
     setLoading(true);
     setError(null);
 
-    // Basic Validation
     if (!formData.phone || !formData.password) {
       setError("Please fill in all fields.");
       setLoading(false);
@@ -131,30 +146,34 @@ const Login: React.FC<LoginProps> = ({ targetRole, onLogin }) => {
       return;
     }
 
-    // Transform Phone to Email for Firebase Auth (Phone+Password pattern)
     const cleanPhone = formData.phone.replace(/\D/g, '');
     if (cleanPhone.length < 10) {
         setError("Please enter a valid phone number.");
         setLoading(false);
         return;
     }
+
+    // SECURITY CHECK: Verify Admin Whitelist for Phone (Dynamic)
+    if (targetRole === 'admin') {
+         const isAdmin = await isUserAdmin(null, cleanPhone);
+         if (!isAdmin) {
+             setLoading(false);
+             setError(`Access Denied: The number "${formData.phone}" is not authorized as an Admin.`);
+             return;
+         }
+    }
+
     const fakeEmail = `${cleanPhone}@quickorder.app`;
 
     try {
       let userCred;
       if (isRegistering) {
-        // Register
         userCred = await createUserWithEmailAndPassword(auth, fakeEmail, formData.password);
-        // Update Display Name
-        await updateProfile(userCred.user, {
-          displayName: formData.name
-        });
+        await updateProfile(userCred.user, { displayName: formData.name });
       } else {
-        // Login
         userCred = await signInWithEmailAndPassword(auth, fakeEmail, formData.password);
       }
 
-      // Success
       if (onLogin) {
         onLogin({
           id: userCred.user.uid,
@@ -204,15 +223,6 @@ const Login: React.FC<LoginProps> = ({ targetRole, onLogin }) => {
               Copy
             </button>
           </div>
-          
-           <div className="flex items-start space-x-2 text-xs text-slate-600 bg-white p-2 rounded border border-slate-200">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-              </svg>
-              <span>
-                  <strong>Already added it?</strong> Please wait a few minutes. Firebase takes up to 5 minutes to propagate changes to authorized domains.
-              </span>
-          </div>
         </div>
 
         <div className="space-y-3">
@@ -239,7 +249,6 @@ const Login: React.FC<LoginProps> = ({ targetRole, onLogin }) => {
     );
   }
 
-  // --- RENDER: LOGIN FORM ---
   return (
     <div className="bg-white p-6 sm:p-8 rounded-xl shadow-lg border border-slate-100 max-w-md mx-auto animate-fade-in">
       <div className="text-center mb-8">
@@ -247,11 +256,10 @@ const Login: React.FC<LoginProps> = ({ targetRole, onLogin }) => {
           {isRegistering ? 'Create Account' : (targetRole === 'admin' ? 'Admin Login' : 'User Login')}
         </h2>
         <p className="text-slate-500 text-sm mt-1">
-          {isRegistering ? 'Sign up to start ordering' : 'Welcome back! Please sign in.'}
+          {isRegistering ? 'Sign up to start ordering' : (targetRole === 'admin' ? 'Secure access for store owners.' : 'Welcome back! Please sign in.')}
         </p>
       </div>
 
-      {/* Google Login */}
       <button
         onClick={handleGoogleLogin}
         disabled={loading}
@@ -277,89 +285,40 @@ const Login: React.FC<LoginProps> = ({ targetRole, onLogin }) => {
         </div>
       </div>
 
-      {/* Phone/Password Form */}
       <form onSubmit={handlePhonePasswordSubmit} className="space-y-4">
         {isRegistering && (
           <div className="animate-fade-in">
             <label className="block text-sm font-medium text-slate-600 mb-1">Full Name</label>
-            <input
-              type="text"
-              name="name"
-              value={formData.name}
-              onChange={handleChange}
-              className="w-full px-3 py-2 border rounded-md focus:ring-primary focus:border-primary border-slate-300"
-              placeholder="John Doe"
-              required={isRegistering}
-            />
+            <input type="text" name="name" value={formData.name} onChange={handleChange} className="w-full px-3 py-2 border rounded-md focus:ring-primary focus:border-primary border-slate-300" placeholder="John Doe" required={isRegistering} />
           </div>
         )}
-
         <div>
           <label className="block text-sm font-medium text-slate-600 mb-1">Phone Number</label>
-          <input
-            type="tel"
-            name="phone"
-            value={formData.phone}
-            onChange={handleChange}
-            className="w-full px-3 py-2 border rounded-md focus:ring-primary focus:border-primary border-slate-300"
-            placeholder="9876543210"
-            required
-          />
+          <input type="tel" name="phone" value={formData.phone} onChange={handleChange} className="w-full px-3 py-2 border rounded-md focus:ring-primary focus:border-primary border-slate-300" placeholder="9876543210" required />
         </div>
-
         <div>
           <label className="block text-sm font-medium text-slate-600 mb-1">Password</label>
-          <input
-            type="password"
-            name="password"
-            value={formData.password}
-            onChange={handleChange}
-            className="w-full px-3 py-2 border rounded-md focus:ring-primary focus:border-primary border-slate-300"
-            placeholder="••••••"
-            required
-            minLength={6}
-          />
+          <input type="password" name="password" value={formData.password} onChange={handleChange} className="w-full px-3 py-2 border rounded-md focus:ring-primary focus:border-primary border-slate-300" placeholder="••••••" required minLength={6} />
         </div>
-
         {error && (
-          <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg flex items-start">
-             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1.5 mt-0.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-             </svg>
-             {error}
-          </div>
+          <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg">{error}</div>
         )}
-
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full bg-slate-900 text-white font-bold py-3 rounded-lg hover:bg-slate-800 transition-all shadow-md flex justify-center"
-        >
+        <button type="submit" disabled={loading} className="w-full bg-slate-900 text-white font-bold py-3 rounded-lg hover:bg-slate-800 transition-all shadow-md flex justify-center">
           {loading ? 'Processing...' : (isRegistering ? 'Create Account' : 'Login')}
         </button>
       </form>
 
-      {/* Toggle Login/Register */}
       <div className="mt-6 text-center text-sm">
         <p className="text-slate-600">
           {isRegistering ? 'Already have an account?' : "Don't have an account?"}{' '}
-          <button
-            onClick={() => {
-              setIsRegistering(!isRegistering);
-              setError(null);
-            }}
-            className="text-primary font-semibold hover:underline"
-          >
+          <button onClick={() => { setIsRegistering(!isRegistering); setError(null); }} className="text-primary font-semibold hover:underline">
             {isRegistering ? 'Login here' : 'Register here'}
           </button>
         </p>
       </div>
       
-      {/* Permanent Footer Info for Debugging */}
       <div className="mt-8 pt-4 border-t border-slate-100">
-         <p className="text-xs text-center text-slate-400 mb-1">
-             System Info: Current Address
-         </p>
+         <p className="text-xs text-center text-slate-400 mb-1">System Info: Current Address</p>
          <div className="flex justify-center">
             <code className="bg-slate-100 px-2 py-1 rounded text-xs font-mono text-slate-600 select-all">
                 {getCurrentHostname()}

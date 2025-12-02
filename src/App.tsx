@@ -1,10 +1,10 @@
 
 import React, { useState, useCallback, useEffect } from 'react';
-import { OrderDetails, ProductOrder, CustomerDetails, Product, View, User } from './types';
+import { OrderDetails, ProductOrder, CustomerDetails, Product, View, User, OrderStatus } from './types';
 import { generateUpiUrl } from './services/upiService';
 import Header from './components/Header';
 import Footer from './components/Footer';
-import OrderForm from './components/OrderForm';
+import CustomerDashboard from './components/CustomerDashboard';
 import OrderSummary from './components/OrderSummary';
 import AdminDashboard from './components/admin/AdminDashboard';
 import Login from './components/admin/Login';
@@ -12,7 +12,8 @@ import LandingPage from './components/LandingPage';
 
 // Firebase Imports
 import { db, auth, isFirebaseConfigured } from './services/firebaseConfig';
-import { collection, onSnapshot, addDoc, updateDoc, doc, deleteDoc, query, orderBy } from 'firebase/firestore';
+import { isUserAdmin } from './services/adminService';
+import { collection, onSnapshot, addDoc, updateDoc, doc, deleteDoc, query, orderBy, serverTimestamp } from 'firebase/firestore';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 
 const App: React.FC = () => {
@@ -37,17 +38,31 @@ const App: React.FC = () => {
         return;
     }
 
-    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
-        const determinedRole = localStorage.getItem('temp_role_pref') as 'admin' | 'customer' || 'customer';
+        const storedPref = localStorage.getItem('temp_role_pref') as 'admin' | 'customer' || 'customer';
         
+        // Dynamic Role Check
+        let role: 'admin' | 'customer' = 'customer';
+        
+        if (storedPref === 'admin') {
+            // Verify against database/root list
+            const isAdmin = await isUserAdmin(firebaseUser.email, firebaseUser.phoneNumber ? firebaseUser.phoneNumber.replace(/\D/g, '') : null);
+            if (isAdmin) {
+                role = 'admin';
+            } else {
+                console.warn("User attempted to be admin but is not authorized. Demoting to customer.");
+                role = 'customer';
+            }
+        }
+
         setCurrentUser({
             id: firebaseUser.uid,
             name: firebaseUser.displayName || 'User',
             email: firebaseUser.email || undefined,
             phoneNumber: firebaseUser.phoneNumber || undefined,
             avatar: firebaseUser.photoURL || undefined,
-            role: determinedRole 
+            role: role 
         });
       } else {
         setCurrentUser(null);
@@ -78,12 +93,23 @@ const App: React.FC = () => {
   useEffect(() => {
     if (!isFirebaseConfigured) return;
 
+    // Note: Assuming 'createdAt' or 'orderId' can be used for sorting
     const q = query(collection(db, 'orders'), orderBy('orderId', 'desc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const ordersData = snapshot.docs.map(doc => ({
+        firestoreId: doc.id, // Capture the Firestore Document ID for updates
         ...doc.data()
       })) as OrderDetails[];
+      
       setOrders(ordersData);
+
+      // If the current user is looking at a specific order summary, keep it updated in real-time
+      setOrderDetails(prev => {
+        if (!prev) return null;
+        const updated = ordersData.find(o => o.orderId === prev.orderId);
+        return updated || prev;
+      });
+
     }, (error) => {
         console.error("Error fetching orders:", error);
     });
@@ -96,7 +122,7 @@ const App: React.FC = () => {
         await addDoc(collection(db, 'products'), {
             ...newProductData,
             id: Date.now(), 
-            createdAt: new Date()
+            createdAt: serverTimestamp()
         });
       } catch (e) {
           console.error("Error adding product: ", e);
@@ -140,16 +166,18 @@ const App: React.FC = () => {
     const orderId = `ORD-${Date.now()}`;
     
     const newOrder: OrderDetails = {
+      userId: currentUser?.id, // Save the User ID with the order
       customer,
       products,
       totalAmount,
       orderId,
-      status: 'pending'
+      status: 'pending',
+      createdAt: serverTimestamp()
     };
 
     try {
-        await addDoc(collection(db, 'orders'), newOrder);
-        setOrderDetails(newOrder); 
+        const docRef = await addDoc(collection(db, 'orders'), newOrder);
+        setOrderDetails({ ...newOrder, firestoreId: docRef.id }); 
 
         const upiUrl = generateUpiUrl({
             vpa: 'your-business-upi@oksbi', 
@@ -162,11 +190,21 @@ const App: React.FC = () => {
         console.error("Error placing order: ", e);
         alert("Could not place order. Please try again.");
     }
-  }, []);
+  }, [currentUser]);
 
-  const handleConfirmPaymentFirestore = async (orderId: string) => {
-      alert("To implement confirmation, we need to map Firestore Document IDs to the Order object.");
-  }
+  const handleUpdateOrderStatus = async (firestoreId: string, status: OrderStatus, additionalData: Partial<OrderDetails> = {}) => {
+      if (!isFirebaseConfigured) return;
+      try {
+          const orderRef = doc(db, 'orders', firestoreId);
+          await updateDoc(orderRef, {
+              status,
+              ...additionalData
+          });
+      } catch (e) {
+          console.error("Error updating order status:", e);
+          alert("Failed to update status");
+      }
+  };
 
   const handleNewOrder = useCallback(() => {
     setOrderDetails(null);
@@ -180,13 +218,21 @@ const App: React.FC = () => {
     }
     localStorage.removeItem('temp_role_pref');
     setCurrentUser(null);
-    if (view === 'admin') {
-        setView('landing');
-    }
+    setView('landing'); // Always redirect to Landing Page on logout
+    setShowLoginModal(false);
   };
 
   const handleLoginSuccess = (user: User) => {
+    setCurrentUser(user);
+    localStorage.setItem('temp_role_pref', user.role);
     setShowLoginModal(false);
+    
+    // Auto-navigate to the view they were trying to access
+    if (loginTargetRole === 'admin') {
+        setView('admin');
+    } else {
+        setView('customer');
+    }
   };
 
   const initiateLogin = (role: 'admin' | 'customer') => {
@@ -200,16 +246,25 @@ const App: React.FC = () => {
           setLoginTargetRole('admin');
           if (currentUser?.role !== 'admin') {
               initiateLogin('admin');
+              return; // Stop navigation until logged in
           }
       } else if (newView === 'customer') {
           setLoginTargetRole('customer');
           if (!currentUser) {
               initiateLogin('customer');
+              return; // Stop navigation until logged in
           }
       } else {
           setShowLoginModal(false);
       }
+      
+      // If we passed the checks, change the view
       setView(newView);
+      
+      // Reset specific order view when switching main views
+      if (newView !== 'customer') {
+          setOrderDetails(null);
+      }
   };
 
   // --- RENDER HELPERS ---
@@ -217,36 +272,9 @@ const App: React.FC = () => {
   if (!isFirebaseConfigured) {
       return (
           <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
-              <div className="max-w-xl w-full bg-white rounded-xl shadow-lg overflow-hidden border border-red-100">
-                  <div className="bg-red-500 p-6 text-center">
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-16 w-16 text-white mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                      </svg>
-                      <h2 className="text-2xl font-bold text-white">Firebase Setup Required</h2>
-                  </div>
-                  <div className="p-8 space-y-6">
-                      <p className="text-slate-600 text-lg">
-                          The application cannot connect to the backend because the API keys are missing.
-                      </p>
-                      
-                      <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
-                          <h3 className="font-semibold text-slate-800 mb-2">How to fix this:</h3>
-                          <ol className="list-decimal list-inside space-y-2 text-slate-600">
-                              <li>Go to the <a href="https://console.firebase.google.com/" target="_blank" rel="noreferrer" className="text-primary hover:underline font-medium">Firebase Console</a>.</li>
-                              <li>Open your project settings.</li>
-                              <li>Scroll down to "Your Apps" and find the "SDK Setup and Configuration".</li>
-                              <li>Copy the <code className="bg-slate-200 px-1 py-0.5 rounded text-sm">firebaseConfig</code> object.</li>
-                              <li>Open the file <code className="bg-slate-200 px-1 py-0.5 rounded text-sm text-red-500">services/firebaseConfig.ts</code> in your editor.</li>
-                              <li>Replace the placeholder values with your actual keys.</li>
-                          </ol>
-                      </div>
-                      
-                      <div className="text-center">
-                          <button onClick={() => window.location.reload()} className="bg-slate-800 text-white px-6 py-3 rounded-lg font-semibold hover:bg-slate-700 transition-colors">
-                              I have updated the file, Reload
-                          </button>
-                      </div>
-                  </div>
+              <div className="max-w-xl w-full bg-white rounded-xl shadow-lg border-2 border-red-500 p-8 text-center">
+                  <h2 className="text-2xl font-bold text-slate-800">Setup Required</h2>
+                  <p className="mt-2 text-slate-600">Please check your firebaseConfig file.</p>
               </div>
           </div>
       );
@@ -297,39 +325,51 @@ const App: React.FC = () => {
         <AdminDashboard 
           products={products}
           orders={orders}
+          currentUser={currentUser}
           onAddProduct={handleAddProduct} 
           onUpdateProduct={handleUpdateProduct}
           onDeleteProduct={handleDeleteProduct}
-          onConfirmPayment={handleConfirmPaymentFirestore}
+          onUpdateOrderStatus={handleUpdateOrderStatus}
         />
       );
     }
 
     if (view === 'customer') {
-      if (!orderDetails) {
-        return <OrderForm 
-                    products={products} 
-                    onPlaceOrder={handlePlaceOrder} 
-                    currentUser={currentUser}
-                />;
+      // If we have an active order detail (just placed), show the Receipt/Summary
+      if (orderDetails) {
+        return <OrderSummary orderDetails={orderDetails} paymentUrl={paymentUrl} onNewOrder={handleNewOrder} />;
       }
-      return <OrderSummary orderDetails={orderDetails} paymentUrl={paymentUrl} onNewOrder={handleNewOrder} />;
+
+      // Otherwise show the Customer Dashboard (Shop / My Orders)
+      return (
+        <CustomerDashboard 
+            products={products} 
+            onPlaceOrder={handlePlaceOrder} 
+            currentUser={currentUser}
+            orders={orders} // Pass all orders, Dashboard filters them by currentUser.id
+            onLoginRequest={() => initiateLogin('customer')}
+        />
+      );
     }
   };
 
+  // Determine if Header and Container styles should be shown
+  // Show if: View is NOT Landing OR Login Modal is Open
+  const showHeaderAndContainer = view !== 'landing' || showLoginModal;
+
   return (
     <div className="flex flex-col min-h-screen bg-slate-100 font-sans text-slate-800">
-      {view !== 'landing' && (
+      {showHeaderAndContainer && (
         <Header
-          currentView={view}
+          currentView={showLoginModal ? loginTargetRole : view}
           setView={handleViewChange}
           currentUser={currentUser}
           onLogout={handleLogout}
           onLogin={() => initiateLogin('customer')}
         />
       )}
-      <main className={`flex-grow ${view !== 'landing' ? 'container mx-auto px-4 py-8 md:py-12' : ''}`}>
-        <div className={view !== 'landing' ? 'max-w-4xl mx-auto' : 'h-full'}>
+      <main className={`flex-grow ${showHeaderAndContainer ? 'container mx-auto px-4 py-8 md:py-12' : ''}`}>
+        <div className={showHeaderAndContainer ? 'max-w-4xl mx-auto' : 'h-full'}>
           {renderView()}
         </div>
       </main>

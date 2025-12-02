@@ -1,6 +1,6 @@
+
 import React, { useState, useRef, useEffect } from 'react';
 import { Product } from '../../types';
-import { GoogleGenAI, Modality } from "@google/genai";
 
 interface AddProductFormProps {
     onAddProduct: (newProductData: Omit<Product, 'id'>) => void;
@@ -21,7 +21,6 @@ const AddProductForm: React.FC<AddProductFormProps> = ({ onAddProduct, productTo
     const [formData, setFormData] = useState(initialFormState);
     const [imagePreview, setImagePreview] = useState<string | null>(null);
     const [error, setError] = useState('');
-    const [isGenerating, setIsGenerating] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const isEditing = !!productToEdit;
@@ -89,50 +88,6 @@ const AddProductForm: React.FC<AddProductFormProps> = ({ onAddProduct, productTo
             reader.readAsDataURL(file);
         }
     };
-    
-    const handleGenerateImage = async () => {
-        if (!formData.name) {
-            setError('Please enter a product name to generate an image.');
-            return;
-        }
-
-        setIsGenerating(true);
-        setError('');
-
-        try {
-            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-            const prompt = `A professional, clean product shot of "${formData.name}". ${formData.description || ''}. Centered on a white background.`;
-            
-            const response = await ai.models.generateContent({
-                model: 'gemini-2.5-flash-image',
-                contents: {
-                    parts: [{ text: prompt }],
-                },
-                config: {
-                    responseModalities: [Modality.IMAGE],
-                },
-            });
-            
-            const part = response.candidates?.[0]?.content?.parts?.[0];
-            if (part && part.inlineData) {
-                const base64ImageBytes = part.inlineData.data;
-                const imageUrl = `data:${part.inlineData.mimeType};base64,${base64ImageBytes}`;
-                setFormData(prev => ({ ...prev, imageUrl }));
-                setImagePreview(imageUrl);
-                if (fileInputRef.current) {
-                    fileInputRef.current.value = '';
-                }
-            } else {
-                 throw new Error('Image generation failed. The model may have refused the prompt.');
-            }
-
-        } catch (err) {
-            console.error("Image generation failed:", err);
-            setError(err instanceof Error ? err.message : 'An unexpected error occurred during image generation.');
-        } finally {
-            setIsGenerating(false);
-        }
-    };
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -195,24 +150,6 @@ const AddProductForm: React.FC<AddProductFormProps> = ({ onAddProduct, productTo
                 <div>
                      <div className="flex justify-between items-center mb-1">
                         <label className="block text-sm font-medium text-slate-600">Product Image</label>
-                        {!isEditing && (
-                             <button
-                                type="button"
-                                onClick={handleGenerateImage}
-                                disabled={!formData.name || isGenerating}
-                                className="text-sm font-semibold text-primary hover:text-primary-600 disabled:text-slate-400 disabled:cursor-not-allowed transition-colors flex items-center"
-                            >
-                                {isGenerating ? (
-                                    <>
-                                        <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-primary" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                        </svg>
-                                        Generating...
-                                    </>
-                                ) : '✨ Generate with AI'}
-                            </button>
-                        )}
                      </div>
                      <div className="mt-1 flex items-center space-x-6">
                          <div className="shrink-0 relative">
@@ -222,14 +159,6 @@ const AddProductForm: React.FC<AddProductFormProps> = ({ onAddProduct, productTo
                                 <div className="h-20 w-20 bg-slate-100 rounded-lg flex items-center justify-center">
                                     <svg className="h-12 w-12 text-slate-400" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true">
                                         <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 4v.01M28 8l4.09 4.09a2 2 0 01.59 1.41V28m0 0l-10-10-8 8-4-4m12 6l-4-4" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
-                                    </svg>
-                                </div>
-                            )}
-                            {isGenerating && (
-                                <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center rounded-lg">
-                                     <svg className="animate-spin h-8 w-8 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                                     </svg>
                                 </div>
                             )}

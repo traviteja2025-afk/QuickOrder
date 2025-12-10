@@ -3,7 +3,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Product } from '../../types';
 
 interface AddProductFormProps {
-    onAddProduct: (newProductData: Omit<Product, 'id'>) => void;
+    onAddProduct: (newProductData: Omit<Product, 'id' | 'storeId'>) => void;
     productToEdit?: Product | null;
     onUpdateProduct?: (updatedProduct: Product) => void;
     onCancelEdit?: () => void;
@@ -118,7 +118,11 @@ const AddProductForm: React.FC<AddProductFormProps> = ({
         };
 
         if (isEditing && onUpdateProduct && productToEdit) {
-            onUpdateProduct({ ...productData, id: productToEdit.id });
+            onUpdateProduct({ 
+                ...productData, 
+                id: productToEdit.id,
+                storeId: productToEdit.storeId 
+            });
         } else {
             onAddProduct(productData);
             // Reset form only when adding a new product
@@ -134,41 +138,27 @@ const AddProductForm: React.FC<AddProductFormProps> = ({
     // --- RENDER DELETE CONFIRMATION ---
     if (productToDelete) {
         return (
-            <div className="bg-white p-6 sm:p-8 rounded-xl shadow-lg animate-fade-in border-l-4 border-red-500">
-                <div className="flex items-center space-x-3 mb-4 text-red-600">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                    </svg>
-                    <h2 className="text-2xl font-bold">Delete Product</h2>
-                </div>
-                
-                <p className="text-slate-600 mb-6 text-lg">
-                    Do you want to delete <span className="font-bold text-slate-900">"{productToDelete.name}"</span>?
-                </p>
+            <div className="bg-white p-6 sm:p-8 rounded-xl shadow-lg animate-fade-in border-2 border-red-100">
+                <div className="text-center sm:text-left">
+                    <h3 className="text-xl font-bold text-slate-800 mb-2">Delete Product?</h3>
+                    <p className="text-lg text-slate-600 mb-6">
+                        Do you want to delete <span className="font-bold text-slate-900">"{productToDelete.name}"</span>?
+                    </p>
 
-                {/* Mini Preview */}
-                <div className="flex items-center space-x-4 p-4 border border-red-100 bg-red-50 rounded-lg mb-8">
-                     <img src={productToDelete.imageUrl} alt={productToDelete.name} className="w-16 h-16 object-cover rounded-md shadow-sm" />
-                     <div>
-                        <h4 className="font-bold text-slate-800">{productToDelete.name}</h4>
-                        <p className="text-sm text-slate-500">{productToDelete.description}</p>
-                        <p className="text-sm font-bold text-primary mt-1">₹{productToDelete.price.toFixed(2)}</p>
-                     </div>
-                </div>
-
-                <div className="flex flex-col sm:flex-row gap-4 pt-2 border-t border-slate-100">
-                    <button
-                        onClick={() => onConfirmDelete && onConfirmDelete(productToDelete.id)}
-                        className="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-lg shadow-md transition-all transform hover:scale-105"
-                    >
-                        Yes
-                    </button>
-                    <button
-                        onClick={onCancelDelete}
-                        className="flex-1 bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 font-bold py-3 px-6 rounded-lg transition-colors"
-                    >
-                        No
-                    </button>
+                    <div className="flex gap-4 justify-center sm:justify-start">
+                        <button
+                            onClick={() => onConfirmDelete && onConfirmDelete(productToDelete.id)}
+                            className="bg-red-600 py-2 px-8 rounded-lg shadow-md text-base font-bold text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 transition-all transform hover:scale-105"
+                        >
+                            Yes
+                        </button>
+                        <button
+                            onClick={onCancelDelete}
+                            className="bg-white border border-slate-300 py-2 px-8 rounded-lg shadow-sm text-base font-bold text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-400 transition-all"
+                        >
+                            No
+                        </button>
+                    </div>
                 </div>
             </div>
         );

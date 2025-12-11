@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import firebase, { auth } from '../../services/firebaseConfig';
-import { isUserAdmin } from '../../services/adminService';
+import { isRootAdmin, getManagedStore } from '../../services/adminService';
 import { User } from '../../types';
 
 interface LoginProps {
@@ -87,6 +87,22 @@ const Login: React.FC<LoginProps> = ({ targetRole, onLogin }) => {
     setError(msg);
   };
 
+  const determineUserRole = async (email?: string | null, phone?: string | null): Promise<{role: 'root' | 'seller' | 'customer', managedStoreId?: string}> => {
+      // 1. Check Root Admin
+      if (isRootAdmin(email, phone)) {
+          return { role: 'root' };
+      }
+
+      // 2. Check Seller (Store Owner)
+      const managedStore = await getManagedStore(email, phone);
+      if (managedStore) {
+          return { role: 'seller', managedStoreId: managedStore.storeId };
+      }
+
+      // 3. Default to Customer
+      return { role: 'customer' };
+  };
+
   const handleGoogleLogin = async () => {
     setLoading(true);
     setError(null);
@@ -96,15 +112,15 @@ const Login: React.FC<LoginProps> = ({ targetRole, onLogin }) => {
       
       const userEmail = result.user?.email;
 
-      // SECURITY CHECK: Verify Admin Whitelist (Dynamic)
-      if (targetRole === 'admin') {
-          const isAdmin = await isUserAdmin(userEmail, null);
-          if (!isAdmin) {
-              setLoading(false);
-              setError(`Access Denied: The email "${userEmail}" is not authorized as an Admin.`);
-              await auth.signOut(); // Kick them out immediately
-              return; 
-          }
+      // Smart Role Detection
+      const { role, managedStoreId } = await determineUserRole(userEmail, null);
+
+      // Access Control: If they specifically tried to login as Admin but aren't one
+      if (targetRole === 'admin' && role === 'customer') {
+          setLoading(false);
+          setError(`Access Denied: The email "${userEmail}" is not recognized as an administrator.`);
+          await auth.signOut();
+          return; 
       }
       
       // Success
@@ -112,9 +128,10 @@ const Login: React.FC<LoginProps> = ({ targetRole, onLogin }) => {
         onLogin({
           id: result.user.uid,
           name: result.user.displayName || 'User',
-          role: targetRole || 'customer',
+          role: role, // Use the detected role
           email: result.user.email || undefined,
-          avatar: result.user.photoURL || undefined
+          avatar: result.user.photoURL || undefined,
+          managedStoreId
         });
       }
     } catch (err) {
@@ -145,16 +162,6 @@ const Login: React.FC<LoginProps> = ({ targetRole, onLogin }) => {
         return;
     }
 
-    // SECURITY CHECK: Verify Admin Whitelist for Phone (Dynamic)
-    if (targetRole === 'admin') {
-         const isAdmin = await isUserAdmin(null, cleanPhone);
-         if (!isAdmin) {
-             setLoading(false);
-             setError(`Access Denied: The number "${formData.phone}" is not authorized as an Admin.`);
-             return;
-         }
-    }
-
     const fakeEmail = `${cleanPhone}@quickorder.app`;
 
     try {
@@ -168,12 +175,23 @@ const Login: React.FC<LoginProps> = ({ targetRole, onLogin }) => {
         userCred = await auth.signInWithEmailAndPassword(fakeEmail, formData.password);
       }
 
+      // Smart Role Detection
+      const { role, managedStoreId } = await determineUserRole(null, cleanPhone);
+
+      // Access Control
+      if (targetRole === 'admin' && role === 'customer') {
+           setLoading(false);
+           setError(`Access Denied: The number "${formData.phone}" is not authorized as an Admin.`);
+           return;
+      }
+
       if (onLogin && userCred.user) {
         onLogin({
           id: userCred.user.uid,
           name: userCred.user.displayName || formData.name || 'User',
-          role: targetRole || 'customer',
-          phoneNumber: formData.phone
+          role: role, // Use detected role
+          phoneNumber: formData.phone,
+          managedStoreId
         });
       }
     } catch (err) {

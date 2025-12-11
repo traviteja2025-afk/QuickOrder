@@ -87,6 +87,22 @@ const Login: React.FC<LoginProps> = ({ targetRole, onLogin }) => {
     setError(msg);
   };
 
+  const determineUserRole = async (email?: string | null, phone?: string | null): Promise<{role: 'root' | 'seller' | 'customer', managedStoreId?: string}> => {
+      // 1. Check Root Admin
+      if (isRootAdmin(email, phone)) {
+          return { role: 'root' };
+      }
+
+      // 2. Check Seller (Store Owner)
+      const managedStore = await getManagedStore(email, phone);
+      if (managedStore) {
+          return { role: 'seller', managedStoreId: managedStore.storeId };
+      }
+
+      // 3. Default to Customer
+      return { role: 'customer' };
+  };
+
   const handleGoogleLogin = async () => {
     setLoading(true);
     setError(null);
@@ -96,31 +112,15 @@ const Login: React.FC<LoginProps> = ({ targetRole, onLogin }) => {
       
       const userEmail = result.user?.email;
 
-      // --- ACCESS CONTROL ---
-      let userRole: 'root' | 'seller' | 'customer' = 'customer';
-      let managedStoreId: string | undefined = undefined;
+      // Smart Role Detection
+      const { role, managedStoreId } = await determineUserRole(userEmail, null);
 
-      if (targetRole === 'admin') {
-          // 1. Check Root
-          if (isRootAdmin(userEmail, null)) {
-              userRole = 'root';
-          } 
-          // 2. Check Seller
-          else {
-              const managedStore = await getManagedStore(userEmail, null);
-              if (managedStore) {
-                  userRole = 'seller';
-                  managedStoreId = managedStore.storeId;
-              } else {
-                  setLoading(false);
-                  setError(`Access Denied: The email "${userEmail}" is not recognized. If you are setting up this app, please add this email to ROOT_ADMIN_EMAILS in src/services/firebaseConfig.ts.`);
-                  await auth.signOut();
-                  return; 
-              }
-          }
-      } else {
-          // targetRole === 'customer'
-          userRole = 'customer';
+      // Access Control: If they specifically tried to login as Admin but aren't one
+      if (targetRole === 'admin' && role === 'customer') {
+          setLoading(false);
+          setError(`Access Denied: The email "${userEmail}" is not recognized as an administrator.`);
+          await auth.signOut();
+          return; 
       }
       
       // Success
@@ -128,7 +128,7 @@ const Login: React.FC<LoginProps> = ({ targetRole, onLogin }) => {
         onLogin({
           id: result.user.uid,
           name: result.user.displayName || 'User',
-          role: userRole,
+          role: role, // Use the detected role
           email: result.user.email || undefined,
           avatar: result.user.photoURL || undefined,
           managedStoreId
@@ -175,34 +175,21 @@ const Login: React.FC<LoginProps> = ({ targetRole, onLogin }) => {
         userCred = await auth.signInWithEmailAndPassword(fakeEmail, formData.password);
       }
 
-      // --- POST LOGIN ACCESS CHECK ---
-      let userRole: 'root' | 'seller' | 'customer' = 'customer';
-      let managedStoreId: string | undefined = undefined;
+      // Smart Role Detection
+      const { role, managedStoreId } = await determineUserRole(null, cleanPhone);
 
-      if (targetRole === 'admin') {
-          // 1. Check Root
-          if (isRootAdmin(null, cleanPhone)) {
-              userRole = 'root';
-          } 
-          // 2. Check Seller
-          else {
-              const managedStore = await getManagedStore(null, cleanPhone);
-              if (managedStore) {
-                  userRole = 'seller';
-                  managedStoreId = managedStore.storeId;
-              } else {
-                  setLoading(false);
-                  setError(`Access Denied: The number "${formData.phone}" is not authorized as an Admin. If this is a new setup, add your number to ROOT_ADMIN_PHONES.`);
-                  return;
-              }
-          }
+      // Access Control
+      if (targetRole === 'admin' && role === 'customer') {
+           setLoading(false);
+           setError(`Access Denied: The number "${formData.phone}" is not authorized as an Admin.`);
+           return;
       }
 
       if (onLogin && userCred.user) {
         onLogin({
           id: userCred.user.uid,
           name: userCred.user.displayName || formData.name || 'User',
-          role: userRole,
+          role: role, // Use detected role
           phoneNumber: formData.phone,
           managedStoreId
         });

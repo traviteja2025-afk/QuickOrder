@@ -9,26 +9,31 @@ export const isRootAdmin = (email?: string | null, phone?: string | null): boole
     return false;
 };
 
-// Check if user owns a specific store
-export const getManagedStore = async (email?: string | null, phone?: string | null): Promise<Store | null> => {
+// Check if user owns one or more stores
+export const getManagedStores = async (email?: string | null, phone?: string | null): Promise<Store[]> => {
     try {
         const storesRef = db.collection('stores');
-        let snapshot;
+        let emailStores: Store[] = [];
+        let phoneStores: Store[] = [];
 
         if (email) {
-            snapshot = await storesRef.where('ownerEmail', '==', email).get();
-            if (!snapshot.empty) return snapshot.docs[0].data() as Store;
+            const snapshot = await storesRef.where('ownerEmail', '==', email).get();
+            emailStores = snapshot.docs.map(doc => ({ ...doc.data(), storeId: doc.id } as Store));
         }
 
         if (phone) {
-            snapshot = await storesRef.where('ownerPhone', '==', phone).get();
-            if (!snapshot.empty) return snapshot.docs[0].data() as Store;
+            const snapshot = await storesRef.where('ownerPhone', '==', phone).get();
+            phoneStores = snapshot.docs.map(doc => ({ ...doc.data(), storeId: doc.id } as Store));
         }
 
-        return null;
+        // Combine and Deduplicate by storeId
+        const allStores = [...emailStores, ...phoneStores];
+        const uniqueStores = Array.from(new Map(allStores.map(s => [s.storeId, s])).values());
+        
+        return uniqueStores;
     } catch (error) {
         console.error("Error checking store ownership:", error);
-        return null;
+        return [];
     }
 };
 
@@ -38,10 +43,9 @@ export const createStore = async (storeData: Store) => {
 };
 
 export const getAllStores = async (): Promise<Store[]> => {
-    // Fetches all stores. We sort client-side to avoid Firestore composite index requirements for the public view.
     try {
         const snapshot = await db.collection('stores').get();
-        const stores = snapshot.docs.map(doc => doc.data() as Store);
+        const stores = snapshot.docs.map(doc => ({ ...doc.data(), storeId: doc.id } as Store));
         // Sort by creation date descending (newest first)
         return stores.sort((a, b) => {
              const timeA = a.createdAt?.seconds || 0;
@@ -56,5 +60,4 @@ export const getAllStores = async (): Promise<Store[]> => {
 
 export const deleteStore = async (storeId: string) => {
     await db.collection('stores').doc(storeId).delete();
-    // Note: In a production app, you would also recursively delete products/orders linked to this storeId
 };

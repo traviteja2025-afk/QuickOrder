@@ -1,7 +1,8 @@
 
 import React, { useState, useEffect } from 'react';
 import firebase, { auth } from '../../services/firebaseConfig';
-import { isRootAdmin, getManagedStore } from '../../services/adminService';
+// Fix: Use getManagedStores instead of getManagedStore which was not exported
+import { isRootAdmin, getManagedStores } from '../../services/adminService';
 import { User } from '../../types';
 
 interface LoginProps {
@@ -87,16 +88,17 @@ const Login: React.FC<LoginProps> = ({ targetRole, onLogin }) => {
     setError(msg);
   };
 
-  const determineUserRole = async (email?: string | null, phone?: string | null): Promise<{role: 'root' | 'seller' | 'customer', managedStoreId?: string}> => {
+  // Fix: Update determineUserRole to handle multiple stores (managedStoreIds)
+  const determineUserRole = async (email?: string | null, phone?: string | null): Promise<{role: 'root' | 'seller' | 'customer', managedStoreIds?: string[]}> => {
       // 1. Check Root Admin
       if (isRootAdmin(email, phone)) {
           return { role: 'root' };
       }
 
       // 2. Check Seller (Store Owner)
-      const managedStore = await getManagedStore(email, phone);
-      if (managedStore) {
-          return { role: 'seller', managedStoreId: managedStore.storeId };
+      const managedStores = await getManagedStores(email, phone);
+      if (managedStores.length > 0) {
+          return { role: 'seller', managedStoreIds: managedStores.map(s => s.storeId) };
       }
 
       // 3. Default to Customer
@@ -113,7 +115,8 @@ const Login: React.FC<LoginProps> = ({ targetRole, onLogin }) => {
       const userEmail = result.user?.email;
 
       // Smart Role Detection
-      const { role, managedStoreId } = await determineUserRole(userEmail, null);
+      // Fix: Use plural managedStoreIds to match User interface
+      const { role, managedStoreIds } = await determineUserRole(userEmail, null);
 
       // Access Control: If they specifically tried to login as Admin but aren't one
       if (targetRole === 'admin' && role === 'customer') {
@@ -131,7 +134,8 @@ const Login: React.FC<LoginProps> = ({ targetRole, onLogin }) => {
           role: role, // Use the detected role
           email: result.user.email || undefined,
           avatar: result.user.photoURL || undefined,
-          managedStoreId
+          // Fix: Passing managedStoreIds instead of managedStoreId
+          managedStoreIds
         });
       }
     } catch (err) {
@@ -176,7 +180,8 @@ const Login: React.FC<LoginProps> = ({ targetRole, onLogin }) => {
       }
 
       // Smart Role Detection
-      const { role, managedStoreId } = await determineUserRole(null, cleanPhone);
+      // Fix: Use plural managedStoreIds
+      const { role, managedStoreIds } = await determineUserRole(null, cleanPhone);
 
       // Access Control
       if (targetRole === 'admin' && role === 'customer') {
@@ -191,7 +196,8 @@ const Login: React.FC<LoginProps> = ({ targetRole, onLogin }) => {
           name: userCred.user.displayName || formData.name || 'User',
           role: role, // Use detected role
           phoneNumber: formData.phone,
-          managedStoreId
+          // Fix: Passing managedStoreIds instead of managedStoreId
+          managedStoreIds
         });
       }
     } catch (err) {

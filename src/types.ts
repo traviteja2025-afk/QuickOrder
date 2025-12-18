@@ -49,8 +49,8 @@ export interface User {
   name: string;
   email?: string;
   phoneNumber?: string;
-  role: 'root' | 'seller' | 'customer'; // Updated roles
-  managedStoreId?: string; // If role is seller, which store do they own?
+  role: 'root' | 'seller' | 'customer'; 
+  managedStoreIds?: string[]; // Updated to support multiple stores
   avatar?: string;
 }
 
@@ -62,6 +62,7 @@ export interface Store {
   vpa: string;
   merchantName: string; // For UPI context
   createdAt: any;
+  isActive?: boolean; // New field for pausing orders
 }
 
 export interface StoreSettings {

@@ -12,7 +12,7 @@ import LandingPage from './components/LandingPage';
 
 // Firebase Imports
 import firebase, { db, auth, isFirebaseConfigured } from './services/firebaseConfig';
-import { isRootAdmin, getManagedStore } from './services/adminService';
+import { isRootAdmin, getManagedStores } from './services/adminService';
 
 const App: React.FC = () => {
   // --- STATE ---
@@ -35,19 +35,16 @@ const App: React.FC = () => {
   const [pendingStoreNavigation, setPendingStoreNavigation] = useState<string | null>(null);
 
   // --- HELPER: Fetch Store ---
-  // Added targetView parameter to allow overriding the default 'customer' view
   const fetchStoreDetails = useCallback(async (storeId: string, targetView: View = 'customer') => {
       setIsLoading(true);
       try {
           const doc = await db.collection('stores').doc(storeId).get();
           if (doc.exists) {
               const data = doc.data();
-              // Robustly ensure storeId is present (use doc.id if missing in data)
               const storeData = { ...data, storeId: doc.id } as Store;
               setCurrentStore(storeData);
               setView(targetView); 
           } else {
-              // Store not found
               setCurrentStore(null);
               setView('landing');
           }
@@ -62,7 +59,6 @@ const App: React.FC = () => {
 
   // --- INITIALIZATION & NAVIGATION ---
   
-  // 1. Initial Load
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const storeIdFromUrl = params.get('store');
@@ -74,7 +70,6 @@ const App: React.FC = () => {
     }
   }, [fetchStoreDetails]);
 
-  // 2. Handle Browser Back/Forward Buttons (Popstate)
   useEffect(() => {
     const handlePopState = () => {
         const params = new URLSearchParams(window.location.search);
@@ -85,7 +80,6 @@ const App: React.FC = () => {
                  fetchStoreDetails(storeId);
             }
         } else {
-            // No store in URL -> Go to Landing
             if (view !== 'landing') {
                 setCurrentStore(null);
                 setView('landing');
@@ -98,46 +92,34 @@ const App: React.FC = () => {
   }, [currentStore, view, fetchStoreDetails]);
 
   const handleNavigateToStore = (storeId: string) => {
-      // 1. Root Admin Navigation from Admin Dashboard
-      // If the user is a Root Admin AND they are currently in the Admin View,
-      // we assume they want to manage the store they clicked on.
       if (currentUser?.role === 'root' && view === 'admin') {
            const newUrl = `${window.location.pathname}?store=${storeId}`;
            window.history.pushState({path: newUrl}, '', newUrl);
-           fetchStoreDetails(storeId, 'admin'); // Pass 'admin' as targetView
+           fetchStoreDetails(storeId, 'admin');
            return;
       }
 
-      // 2. Standard Navigation (Customer Intent)
-      
-      // INTERCEPTION: If user is not logged in, prompt login first.
+      // Interception: If user is not logged in, prompt login first.
       if (!currentUser) {
           setPendingStoreNavigation(storeId);
           initiateLogin('customer');
           return;
       }
 
-      // Proceed if logged in
       navigateToStoreInternal(storeId);
   };
 
   const navigateToStoreInternal = (storeId: string) => {
-      // Update URL
       const newUrl = `${window.location.pathname}?store=${storeId}`;
       window.history.pushState({path: newUrl}, '', newUrl);
       
-      // STRICT MODE SWITCHING:
-      // When entering a store (via Trending Shops or Search), enforce 'customer' mode.
-      // If user is currently Admin, switch them to Customer context so they can shop.
       if (currentUser && currentUser.role !== 'customer') {
           const demotedUser = { ...currentUser, role: 'customer' as 'customer' };
           setCurrentUser(demotedUser);
           localStorage.setItem('temp_role_pref', 'customer');
       }
       
-      // Ensure future logins from this path default to customer
       setLoginTargetRole('customer');
-      
       fetchStoreDetails(storeId);
   };
 
@@ -146,8 +128,14 @@ const App: React.FC = () => {
       setView('landing');
       setShowLoginModal(false);
       setPendingStoreNavigation(null);
-      // Clear URL params
       window.history.pushState({}, '', window.location.pathname);
+  };
+
+  const handleClearStoreSelection = () => {
+    setCurrentStore(null);
+    const newUrl = window.location.pathname;
+    window.history.pushState({}, '', newUrl);
+    // View remains 'admin', so the selector will show up
   };
 
   // --- AUTH LISTENERS ---
@@ -156,22 +144,18 @@ const App: React.FC = () => {
 
     const unsubscribe = auth.onAuthStateChanged(async (firebaseUser) => {
       if (firebaseUser) {
-        // Determine Role based on User Preference (Login Intent) + Database Permissions
         const storedPref = localStorage.getItem('temp_role_pref') as 'root' | 'seller' | 'customer' || 'customer';
         let finalRole: 'root' | 'seller' | 'customer' = 'customer';
-        let managedStoreId: string | undefined = undefined;
+        let managedStoreIds: string[] = [];
 
-        // Only check for elevated roles if the preference is NOT customer
         if (storedPref !== 'customer') {
-             // 1. Check Root Admin
             if (isRootAdmin(firebaseUser.email, firebaseUser.phoneNumber ? firebaseUser.phoneNumber.replace(/\D/g, '') : null)) {
                 finalRole = 'root';
             } else {
-                // 2. Check Seller Access
-                const managedStore = await getManagedStore(firebaseUser.email, firebaseUser.phoneNumber ? firebaseUser.phoneNumber.replace(/\D/g, '') : null);
-                if (managedStore) {
+                const managedStores = await getManagedStores(firebaseUser.email, firebaseUser.phoneNumber ? firebaseUser.phoneNumber.replace(/\D/g, '') : null);
+                if (managedStores.length > 0) {
                     finalRole = 'seller';
-                    managedStoreId = managedStore.storeId;
+                    managedStoreIds = managedStores.map(s => s.storeId);
                 }
             }
         }
@@ -182,7 +166,7 @@ const App: React.FC = () => {
             email: firebaseUser.email || undefined,
             phoneNumber: firebaseUser.phoneNumber || undefined,
             role: finalRole,
-            managedStoreId,
+            managedStoreIds,
             avatar: firebaseUser.photoURL || undefined,
         });
 
@@ -194,9 +178,8 @@ const App: React.FC = () => {
   }, []);
 
 
-  // --- DATA LISTENERS (Filtered by Store ID) ---
+  // --- DATA LISTENERS ---
   
-  // 1. Listen for Products
   useEffect(() => {
     if (!isFirebaseConfigured || !currentStore) {
         setProducts([]);
@@ -216,13 +199,10 @@ const App: React.FC = () => {
             }) as any[];
             productsData.sort((a, b) => b._sortKey - a._sortKey);
             setProducts(productsData);
-        }, (error) => {
-            console.error("Error fetching products:", error);
-        });
+        }, (error) => console.error("Error products:", error));
     return () => unsubscribe();
   }, [currentStore]);
 
-  // 2. Listen for Orders
   useEffect(() => {
     if (!isFirebaseConfigured || !currentStore) {
         setOrders([]);
@@ -250,7 +230,7 @@ const App: React.FC = () => {
                 const updated = ordersData.find(o => o.orderId === prev.orderId);
                 return updated || prev;
             });
-        }, (error) => console.error("Error fetching orders:", error));
+        }, (error) => console.error("Error orders:", error));
         
     return () => unsubscribe();
   }, [currentStore]);
@@ -276,10 +256,7 @@ const App: React.FC = () => {
             id: Date.now(), 
             createdAt: firebase.firestore.FieldValue.serverTimestamp()
         });
-      } catch (e) {
-          console.error("Error adding product: ", e);
-          alert("Failed to add product");
-      }
+      } catch (e) { console.error(e); alert("Failed to add product"); }
   };
 
   const handleUpdateProduct = async (updatedProduct: Product) => {
@@ -332,10 +309,7 @@ const App: React.FC = () => {
             transactionRef: orderId 
         });
         setPaymentUrl(upiUrl);
-    } catch (e) {
-        console.error("Error placing order: ", e);
-        alert("Could not place order.");
-    }
+    } catch (e) { console.error(e); alert("Could not place order."); }
   }, [currentUser, currentStore]);
 
   const handleUpdateOrderStatus = async (firestoreId: string, status: OrderStatus, additionalData: Partial<OrderDetails> = {}) => {
@@ -350,8 +324,6 @@ const App: React.FC = () => {
     setCurrentUser(null);
     setShowLoginModal(false);
     setPendingStoreNavigation(null);
-    
-    // Always redirect to landing page on logout
     setCurrentStore(null);
     setView('landing');
     window.history.pushState({}, '', window.location.pathname);
@@ -361,68 +333,47 @@ const App: React.FC = () => {
     setCurrentUser(user);
     setShowLoginModal(false);
 
-    // CHECK FOR PENDING NAVIGATION (from Landing Page click)
     if (pendingStoreNavigation) {
-        // User clicked a shop, was asked to login, and has now logged in.
-        // We force them to customer mode and navigate to that shop.
-        
-        // 1. Force Preference
         localStorage.setItem('temp_role_pref', 'customer');
-        
-        // 2. Demote locally if they are admin, so they can shop
         if (user.role !== 'customer') {
             const demotedUser = { ...user, role: 'customer' as 'customer' };
             setCurrentUser(demotedUser);
         }
-        
-        // 3. Navigate
         navigateToStoreInternal(pendingStoreNavigation);
-        
-        // 4. Clear pending
         setPendingStoreNavigation(null);
         return;
     }
     
-    // PRIORITY CHECK: LOGIN INTENT (Normal flow)
-    // If the user's intent was to login as a customer (e.g. from checkout button inside a store),
-    // we keep them on the customer view.
     if (loginTargetRole === 'customer') {
         localStorage.setItem('temp_role_pref', 'customer');
         setView('customer');
         return;
     }
     
-    // Otherwise, they explicitly logged in via "Merchant Login", so we honor Admin Roles.
     localStorage.setItem('temp_role_pref', user.role === 'root' || user.role === 'seller' ? 'admin' : 'customer');
 
     if (user.role === 'root') {
         setView('admin');
     } else if (user.role === 'seller') {
-        // Seller logic: Go to their store admin
-        if (user.managedStoreId) {
-            if (!currentStore || currentStore.storeId !== user.managedStoreId) {
-                 const newUrl = `${window.location.pathname}?store=${user.managedStoreId}`;
-                 window.history.pushState({path: newUrl}, '', newUrl);
-                 fetchStoreDetails(user.managedStoreId, 'admin');
-            } else {
-                setView('admin');
-            }
+        if (user.managedStoreIds && user.managedStoreIds.length === 1) {
+             const singleId = user.managedStoreIds[0];
+             const newUrl = `${window.location.pathname}?store=${singleId}`;
+             window.history.pushState({path: newUrl}, '', newUrl);
+             fetchStoreDetails(singleId, 'admin');
         } else {
+            // Multiple stores or none? Go to admin dashboard for selection
             setView('admin');
+            setCurrentStore(null);
         }
     } else {
-        // Customer
         setView('customer');
     }
   };
 
   const initiateLogin = (role: 'admin' | 'customer') => {
       setLoginTargetRole(role);
-      // We do NOT set temp_role_pref here; we wait for success.
       setShowLoginModal(true);
   };
-
-  // --- RENDER HELPERS ---
 
   if (isLoading) {
       return <div className="min-h-screen flex items-center justify-center bg-slate-100 animate-pulse text-slate-500 font-medium">Loading QuickOrder...</div>;
@@ -438,24 +389,21 @@ const App: React.FC = () => {
         );
     }
 
-    // Default View (Landing)
     if (view === 'landing' && !currentStore) {
         const handleLandingAdminNav = () => {
-             // If already logged in as Seller/Admin, go directly to dashboard
              if (currentUser && (currentUser.role === 'root' || currentUser.role === 'seller')) {
-                 if (currentUser.role === 'seller' && currentUser.managedStoreId) {
-                     const newUrl = `${window.location.pathname}?store=${currentUser.managedStoreId}`;
+                 if (currentUser.role === 'seller' && currentUser.managedStoreIds && currentUser.managedStoreIds.length === 1) {
+                     const singleId = currentUser.managedStoreIds[0];
+                     const newUrl = `${window.location.pathname}?store=${singleId}`;
                      window.history.pushState({path: newUrl}, '', newUrl);
-                     fetchStoreDetails(currentUser.managedStoreId, 'admin');
+                     fetchStoreDetails(singleId, 'admin');
                  } else {
                      setView('admin');
                  }
              } else {
-                 // Otherwise invoke login
                  initiateLogin('admin');
              }
         };
-
         return <LandingPage onNavigateToStore={handleNavigateToStore} onNavigateToAdmin={handleLandingAdminNav} />;
     }
     
@@ -469,11 +417,6 @@ const App: React.FC = () => {
           );
       }
       
-      // Access Control: Seller can only see their own store dashboard
-      if (currentUser.role === 'seller' && currentStore && currentUser.managedStoreId !== currentStore.storeId) {
-          return <div className="text-center p-10 text-red-500 font-bold">You are authorized to manage "{currentUser.managedStoreId}", not this store.</div>
-      }
-
       return (
         <AdminDashboard 
           currentStore={currentStore}
@@ -486,7 +429,8 @@ const App: React.FC = () => {
           onDeleteProduct={handleDeleteProduct}
           onUpdateOrderStatus={handleUpdateOrderStatus}
           onDeleteOrder={handleDeleteOrder}
-          onNavigateToStore={handleNavigateToStore}
+          onNavigateToStore={(id) => fetchStoreDetails(id, 'admin')}
+          onClearStoreSelection={handleClearStoreSelection}
         />
       );
     }
@@ -494,8 +438,6 @@ const App: React.FC = () => {
     if (view === 'customer') {
       if (!currentStore) return <LandingPage onNavigateToStore={handleNavigateToStore} onNavigateToAdmin={() => initiateLogin('admin')} />;
 
-      // Note: We don't force login here. Customer dashboard handles guest/login states.
-      
       if (orderDetails) {
         return <OrderSummary 
             orderDetails={orderDetails} 
@@ -507,10 +449,11 @@ const App: React.FC = () => {
 
       return (
         <div className="space-y-6">
-            <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 flex justify-between items-center">
+            <div className={`bg-white p-4 rounded-xl shadow-sm border flex justify-between items-center transition-colors ${currentStore.isActive !== false ? 'border-slate-100' : 'border-red-200 bg-red-50/20'}`}>
                 <div>
                     <h2 className="text-xl font-bold text-slate-800">{currentStore.name}</h2>
                     <p className="text-xs text-slate-500">Store ID: {currentStore.storeId}</p>
+                    {currentStore.isActive === false && <p className="text-xs font-bold text-red-600 mt-1 uppercase tracking-tighter">Temporarily Closed</p>}
                 </div>
                 <button onClick={() => { setCurrentStore(null); setView('landing'); window.history.pushState({}, '', window.location.pathname); }} className="text-xs text-slate-400 underline">Change Store</button>
             </div>
@@ -521,6 +464,7 @@ const App: React.FC = () => {
                 currentUser={currentUser}
                 orders={orders}
                 onLoginRequest={() => initiateLogin('customer')}
+                currentStore={currentStore}
             />
         </div>
       );

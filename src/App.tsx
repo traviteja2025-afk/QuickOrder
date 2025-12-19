@@ -124,11 +124,17 @@ const App: React.FC = () => {
   };
 
   const handleLogoClick = () => {
+      // End the current session by clearing store and order details
+      setOrderDetails(null);
+      setPaymentUrl('');
       setCurrentStore(null);
       setView('landing');
       setShowLoginModal(false);
       setPendingStoreNavigation(null);
-      window.history.pushState({}, '', window.location.pathname);
+      
+      // Reset URL to base path
+      const newUrl = window.location.pathname;
+      window.history.pushState({}, '', newUrl);
   };
 
   const handleClearStoreSelection = () => {
@@ -319,13 +325,22 @@ const App: React.FC = () => {
   };
 
   const handleLogout = async () => {
-    await auth.signOut();
+    if (isFirebaseConfigured) {
+        await auth.signOut();
+    }
     localStorage.removeItem('temp_role_pref');
+    
+    // CRITICAL FIX: Reset session-specific state variables to prevent order persistence after logout
+    setOrderDetails(null);
+    setPaymentUrl('');
+    
     setCurrentUser(null);
     setShowLoginModal(false);
     setPendingStoreNavigation(null);
     setCurrentStore(null);
     setView('landing');
+    
+    // Clear URL history state
     window.history.pushState({}, '', window.location.pathname);
   };
 
@@ -455,7 +470,7 @@ const App: React.FC = () => {
                     <p className="text-xs text-slate-500">Store ID: {currentStore.storeId}</p>
                     {currentStore.isActive === false && <p className="text-xs font-bold text-red-600 mt-1 uppercase tracking-tighter">Temporarily Closed</p>}
                 </div>
-                <button onClick={() => { setCurrentStore(null); setView('landing'); window.history.pushState({}, '', window.location.pathname); }} className="text-xs text-slate-400 underline">Change Store</button>
+                <button onClick={handleLogoClick} className="text-xs text-slate-400 underline">Change Store</button>
             </div>
 
             <CustomerDashboard 

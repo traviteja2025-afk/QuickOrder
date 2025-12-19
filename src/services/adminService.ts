@@ -2,14 +2,39 @@
 import { db, ROOT_ADMIN_EMAILS, ROOT_ADMIN_PHONES } from './firebaseConfig';
 import { Store } from '../types';
 
-// Check if user is Root Admin
+// Checks if a user is a root admin
 export const isRootAdmin = (email?: string | null, phone?: string | null): boolean => {
     if (email && ROOT_ADMIN_EMAILS.includes(email)) return true;
     if (phone && ROOT_ADMIN_PHONES.includes(phone)) return true;
     return false;
 };
 
-// Check if user owns one or more stores
+// Checks if a user is an admin (either Root or in Database)
+export const isUserAdmin = async (email?: string | null, phone?: string | null): Promise<boolean> => {
+    // 1. Check Root Admins (Hardcoded in config) - Instant Access
+    if (isRootAdmin(email, phone)) return true;
+
+    // 2. Check Database Admins
+    try {
+        const adminsRef = db.collection('admins');
+        
+        if (email) {
+            const snapshot = await adminsRef.where('email', '==', email).get();
+            if (!snapshot.empty) return true;
+        }
+
+        if (phone) {
+            const snapshot = await adminsRef.where('phone', '==', phone).get();
+            if (!snapshot.empty) return true;
+        }
+        
+        return false;
+    } catch (error) {
+        console.error("Error checking admin status:", error);
+        return false;
+    }
+};
+
 export const getManagedStores = async (email?: string | null, phone?: string | null): Promise<Store[]> => {
     try {
         const storesRef = db.collection('stores');
@@ -37,25 +62,32 @@ export const getManagedStores = async (email?: string | null, phone?: string | n
     }
 };
 
-export const createStore = async (storeData: Store) => {
-    // We use the storeId (slug) as the document ID for easy lookup
-    await db.collection('stores').doc(storeData.storeId).set(storeData);
+export const getAdmins = async () => {
+    const querySnapshot = await db.collection('admins').get();
+    return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+};
+
+export const addAdmin = async (email: string, phone: string, name: string) => {
+    await db.collection('admins').add({ email, phone, name, createdAt: new Date() });
+};
+
+export const removeAdmin = async (adminId: string) => {
+    await db.collection('admins').doc(adminId).delete();
 };
 
 export const getAllStores = async (): Promise<Store[]> => {
     try {
         const snapshot = await db.collection('stores').get();
         const stores = snapshot.docs.map(doc => ({ ...doc.data(), storeId: doc.id } as Store));
-        // Sort by creation date descending (newest first)
-        return stores.sort((a, b) => {
-             const timeA = a.createdAt?.seconds || 0;
-             const timeB = b.createdAt?.seconds || 0;
-             return timeB - timeA;
-        });
+        return stores;
     } catch (e) {
         console.error("Error fetching stores:", e);
         return [];
     }
+};
+
+export const createStore = async (storeData: Store) => {
+    await db.collection('stores').doc(storeData.storeId).set(storeData);
 };
 
 export const deleteStore = async (storeId: string) => {

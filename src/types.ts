@@ -1,7 +1,6 @@
 
 export interface Product {
   id: number | string;
-  storeId: string; // Link product to a specific store
   name: string;
   description: string;
   price: number;
@@ -23,16 +22,16 @@ export interface CustomerDetails {
 export type OrderStatus = 'pending' | 'paid' | 'confirmed' | 'shipped' | 'delivered' | 'cancelled';
 
 export interface OrderDetails {
-  firestoreId?: string; 
+  firestoreId?: string; // Internal Firestore Document ID
   storeId: string; // Link order to a specific store
-  userId?: string; 
+  userId?: string; // Link order to a registered user
   customer: CustomerDetails;
   products: ProductOrder[];
   totalAmount: number;
   orderId: string;
   status: OrderStatus;
   trackingNumber?: string;
-  paymentId?: string; 
+  paymentId?: string; // Added for Razorpay payment tracking
   createdAt?: any;
 }
 
@@ -49,8 +48,8 @@ export interface User {
   name: string;
   email?: string;
   phoneNumber?: string;
-  role: 'root' | 'seller' | 'customer'; 
-  managedStoreIds?: string[]; // Updated to support multiple stores
+  role: 'root' | 'seller' | 'customer';
+  managedStoreIds?: string[];
   avatar?: string;
 }
 
@@ -70,4 +69,4 @@ export interface StoreSettings {
     merchantName: string;
 }
 
-export type View = 'landing' | 'customer' | 'admin' | 'root-dashboard';
+export type View = 'landing' | 'customer' | 'admin';

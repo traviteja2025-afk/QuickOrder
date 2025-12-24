@@ -23,6 +23,7 @@ export type OrderStatus = 'pending' | 'paid' | 'confirmed' | 'shipped' | 'delive
 
 export interface OrderDetails {
   firestoreId?: string; // Internal Firestore Document ID
+  storeId: string; // Link order to a specific store
   userId?: string; // Link order to a registered user
   customer: CustomerDetails;
   products: ProductOrder[];
@@ -30,7 +31,7 @@ export interface OrderDetails {
   orderId: string;
   status: OrderStatus;
   trackingNumber?: string;
-  paymentId?: string; // Added for payment tracking
+  paymentId?: string; // Added for Razorpay payment tracking
   createdAt?: any;
 }
 
@@ -39,7 +40,7 @@ export interface UpiDetails {
   payeeName: string;
   amount: number;
   transactionNote: string;
-  transactionRef: string; // Added: Mandatory for Intent Flow tracking
+  transactionRef: string;
 }
 
 export interface User {
@@ -47,13 +48,25 @@ export interface User {
   name: string;
   email?: string;
   phoneNumber?: string;
-  role: 'admin' | 'customer';
+  role: 'root' | 'seller' | 'customer';
+  managedStoreIds?: string[];
   avatar?: string;
 }
 
+export interface Store {
+  storeId: string; // Unique URL slug (e.g., 'teja-shop')
+  name: string;
+  ownerEmail?: string;
+  ownerPhone?: string;
+  vpa: string;
+  merchantName: string; // For UPI context
+  createdAt: any;
+  isActive?: boolean; // New field for pausing orders
+}
+
 export interface StoreSettings {
-  merchantVpa: string;
-  merchantName: string;
+    merchantVpa: string;
+    merchantName: string;
 }
 
 export type View = 'landing' | 'customer' | 'admin';
